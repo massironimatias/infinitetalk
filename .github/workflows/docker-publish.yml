@@ -8,7 +8,7 @@ on:
       tag:
         description: 'Etiqueta de la imagen (ej: test1, test2, test3)'
         required: false
-        default: 'test1'
+        default: 'test2'
 
 jobs:
   build:
@@ -39,7 +39,7 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.tag }}" ]; then
             TAG="${{ github.event.inputs.tag }}"
           else
-            TAG="test1"
+            TAG="test2"
           fi
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "🚀 Se compilará con el tag: $TAG"
