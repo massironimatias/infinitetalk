@@ -138,6 +138,32 @@ def get_video_dimensions(video_path):
     return None, None
 
 
+def free_comfyui_memory():
+    """Libera la VRAM de la GPU descargando modelos de ComfyUI y limpiando caché de CUDA."""
+    try:
+        url = f"http://{server_address}:8188/free"
+        data = json.dumps({"unload_models": True, "free_memory": True}).encode("utf-8")
+        req = urllib.request.Request(
+            url, data=data, headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(req, timeout=5) as response:
+            logger.info("🧹 Modelos de ComfyUI descargados de la GPU (/free exitoso)")
+    except Exception as e:
+        logger.warning(f"No se pudo llamar al endpoint /free de ComfyUI: {e}")
+
+    try:
+        import torch
+
+        torch.cuda.empty_cache()
+        torch.cuda.ipc_collect()
+        free_bytes, total_bytes = torch.cuda.mem_get_info()
+        logger.info(
+            f"🧹 VRAM de la GPU liberada: {free_bytes / (1024**3):.2f} GB libres de {total_bytes / (1024**3):.2f} GB"
+        )
+    except Exception as e:
+        logger.warning(f"No se pudo limpiar caché CUDA en Python: {e}")
+
+
 def run_ffmpeg_encode(input_video, output_video, vf_str=None, audio_source=None):
     """
     Ejecuta ffmpeg con aceleración por GPU (h264_nvenc) con fallback automático a CPU ultrafast.
@@ -791,6 +817,9 @@ def handler(job):
     videos = get_videos(ws, prompt, input_type, person_count)
     ws.close()
     logger.info("Conexión WebSocket cerrada")
+
+    # Liberar memoria VRAM de la GPU antes de comenzar el post-procesamiento
+    free_comfyui_memory()
 
     # =========================================================================
     # OBJETIVO 1: Selección inteligente del video final
