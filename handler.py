@@ -158,13 +158,16 @@ def enhance_video_quality(
         w, h = get_video_dimensions(input_video_path)
         if w and h:
             if h > w:
-                scale_filter = "scale=1080:1920:flags=lanczos,unsharp=5:5:0.6:5:5:0.0"
+                # Video vertical (e.g. 9:16, 3:4, 4:5): Preserva aspect ratio exacto con altura 1920
+                scale_filter = "scale=-2:1920:flags=lanczos,unsharp=5:5:0.6:5:5:0.0"
             elif w > h:
-                scale_filter = "scale=1920:1080:flags=lanczos,unsharp=5:5:0.6:5:5:0.0"
+                # Video horizontal (e.g. 16:9, 4:3): Preserva aspect ratio exacto con altura 1080
+                scale_filter = "scale=-2:1080:flags=lanczos,unsharp=5:5:0.6:5:5:0.0"
             else:
+                # Video cuadrado (1:1): 1080x1080
                 scale_filter = "scale=1080:1080:flags=lanczos,unsharp=5:5:0.6:5:5:0.0"
         else:
-            scale_filter = "scale='if(gt(ih,iw),1080,1920)':'if(gt(ih,iw),1920,1080)':flags=lanczos,unsharp=5:5:0.6:5:5:0.0"
+            scale_filter = "scale='if(gt(ih,iw),-2,1920)':'if(gt(ih,iw),1920,-2)':flags=lanczos,unsharp=5:5:0.6:5:5:0.0"
 
         vf_filters.append(scale_filter)
 
