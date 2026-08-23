@@ -417,7 +417,7 @@ def handler(job):
     prompt = load_workflow(workflow_path)
 
     # ------------------------------------------------------------------
-    # Configuración dinámica de Force Offload y Steps
+    # Configuración dinámica de Force Offload y Steps ----
     # ------------------------------------------------------------------
     force_offload = job_input.get("force_offload", True)
     logger.info(f"🔧 Configuración: force_offload={force_offload}")
