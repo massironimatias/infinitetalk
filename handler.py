@@ -14,6 +14,7 @@ import shutil
 import time
 import boto3
 from botocore.client import Config
+import numpy as np
 
 # Configuración de logging
 logging.basicConfig(level=logging.INFO)
@@ -171,31 +172,49 @@ def ai_upscale_video(input_video_path, output_video_path):
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         writer = cv2.VideoWriter(temp_no_audio, fourcc, fps, (target_w, target_h))
 
-        frame_idx = 0
+        batch_size = 4
+        frames_batch = []
         with torch.no_grad():
             while cap.isOpened():
                 ret, frame = cap.read()
                 if not ret:
                     break
-                # BGR a RGB
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                tensor = (
-                    torch.from_numpy(frame_rgb)
-                    .permute(2, 0, 1)
-                    .unsqueeze(0)
+                frames_batch.append(frame_rgb)
+                if len(frames_batch) == batch_size:
+                    batch_np = np.stack(frames_batch)
+                    batch_tensor = (
+                        torch.from_numpy(batch_np)
+                        .permute(0, 3, 1, 2)
+                        .float()
+                        .to("cuda")
+                        / 255.0
+                    )
+                    out_tensors = model(batch_tensor)
+                    out_numpys = (
+                        out_tensors.permute(0, 2, 3, 1).clamp(0, 1).cpu().numpy()
+                        * 255.0
+                    ).astype("uint8")
+                    for out_np in out_numpys:
+                        writer.write(cv2.cvtColor(out_np, cv2.COLOR_RGB2BGR))
+                    frames_batch = []
+
+            if frames_batch:
+                batch_np = np.stack(frames_batch)
+                batch_tensor = (
+                    torch.from_numpy(batch_np)
+                    .permute(0, 3, 1, 2)
                     .float()
                     .to("cuda")
                     / 255.0
                 )
-                out_tensor = model(tensor)
-                out_numpy = (
-                    out_tensor.squeeze(0).permute(1, 2, 0).clamp(0, 1).cpu().numpy()
+                out_tensors = model(batch_tensor)
+                out_numpys = (
+                    out_tensors.permute(0, 2, 3, 1).clamp(0, 1).cpu().numpy()
                     * 255.0
                 ).astype("uint8")
-                # RGB a BGR
-                out_bgr = cv2.cvtColor(out_numpy, cv2.COLOR_RGB2BGR)
-                writer.write(out_bgr)
-                frame_idx += 1
+                for out_np in out_numpys:
+                    writer.write(cv2.cvtColor(out_np, cv2.COLOR_RGB2BGR))
 
         cap.release()
         writer.release()
@@ -279,7 +298,7 @@ def enhance_video_quality(
         vf_filters.append(scale_filter)
 
     if target_fps and int(target_fps) > 0:
-        fps_filter = f"minterpolate='fps={int(target_fps)}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1'"
+        fps_filter = f"fps=fps={int(target_fps)}"
         vf_filters.append(fps_filter)
 
     if vf_filters:
