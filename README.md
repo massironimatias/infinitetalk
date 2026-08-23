@@ -1,15 +1,10 @@
-# InfiniteTalk for RunPod Serverless
-[한국어 README 보기](README_kr.md)
 
-This project is a template designed to easily deploy and use [InfiniteTalk](https://github.com/Kijai/InfiniteTalk) in the RunPod Serverless environment.
+This project is a template designed to easily deploy and use [InfiniteTalk](https://github.com/massironimatias/InfiniteTalk) in the RunPod Serverless environment.
 
-[![Runpod](https://api.runpod.io/badge/wlsdml1114/InfiniteTalk_Runpod_hub)](https://console.runpod.io/hub/wlsdml1114/InfiniteTalk_Runpod_hub)
+[![Runpod](https://api.runpod.io/badge/massironimatias/infinitetalk_serverless)](https://console.runpod.io/hub/massironimatias/infinitetalk_serverless)
 
 InfiniteTalk is an AI model that takes a single portrait image and speech audio as input to generate natural lip-sync videos with infinite talking capabilities.
 
-## 🎨 Engui Studio Integration
-
-[![EnguiStudio](https://raw.githubusercontent.com/wlsdml1114/Engui_Studio/main/assets/banner.png)](https://github.com/wlsdml1114/Engui_Studio)
 
 This InfiniteTalk template is primarily designed for **Engui Studio**, a comprehensive AI model management platform. While it can be used via API, Engui Studio provides enhanced features and broader model support.
 
@@ -47,48 +42,54 @@ This template includes all the necessary components to run InfiniteTalk as a Run
 The `input` object must contain the following fields. Images, videos, and audio can be input using **path, URL, or Base64** - one method for each.
 
 #### Workflow Selection Parameters
-| Parameter | Type | Required | Default | Description |
-| --- | --- | --- | --- | --- |
-| `input_type` | `string` | No | `"image"` | Type of input: `"image"` for Image-to-Video (I2V) or `"video"` for Video-to-Video (V2V) |
-| `person_count` | `string` | No | `"single"` | Number of people: `"single"` for one person or `"multi"` for multiple people |
+| Parameter      | Type     | Required | Default    | Description                                                                             |
+| -------------- | -------- | -------- | ---------- | --------------------------------------------------------------------------------------- |
+| `input_type`   | `string` | No       | `"image"`  | Type of input: `"image"` for Image-to-Video (I2V) or `"video"` for Video-to-Video (V2V) |
+| `person_count` | `string` | No       | `"single"` | Number of people: `"single"` for one person or `"multi"` for multiple people            |
 
 #### Image Input (for I2V workflows - use only one)
-| Parameter | Type | Required | Default | Description |
-| --- | --- | --- | --- | --- |
-| `image_path` | `string` | No | `/examples/image.jpg` | Local path to the portrait image for lip-sync |
-| `image_url` | `string` | No | `/examples/image.jpg` | URL to the portrait image for lip-sync |
-| `image_base64` | `string` | No | `/examples/image.jpg` | Base64 encoded string of the portrait image for lip-sync |
+| Parameter      | Type     | Required | Default               | Description                                              |
+| -------------- | -------- | -------- | --------------------- | -------------------------------------------------------- |
+| `image_path`   | `string` | No       | `/examples/image.jpg` | Local path to the portrait image for lip-sync            |
+| `image_url`    | `string` | No       | `/examples/image.jpg` | URL to the portrait image for lip-sync                   |
+| `image_base64` | `string` | No       | `/examples/image.jpg` | Base64 encoded string of the portrait image for lip-sync |
 
 #### Video Input (for V2V workflows - use only one)
-| Parameter | Type | Required | Default | Description |
-| --- | --- | --- | --- | --- |
-| `video_path` | `string` | No | `/examples/image.jpg` | Local path to the input video file |
-| `video_url` | `string` | No | `/examples/image.jpg` | URL to the input video file |
-| `video_base64` | `string` | No | `/examples/image.jpg` | Base64 encoded string of the input video file |
+| Parameter      | Type     | Required | Default               | Description                                   |
+| -------------- | -------- | -------- | --------------------- | --------------------------------------------- |
+| `video_path`   | `string` | No       | `/examples/image.jpg` | Local path to the input video file            |
+| `video_url`    | `string` | No       | `/examples/image.jpg` | URL to the input video file                   |
+| `video_base64` | `string` | No       | `/examples/image.jpg` | Base64 encoded string of the input video file |
 
 #### Audio Input (use only one)
-| Parameter | Type | Required | Default | Description |
-| --- | --- | --- | --- | --- |
-| `wav_path` | `string` | No | `/examples/audio.mp3` | Local path to the audio file (WAV/MP3 format supported) |
-| `wav_url` | `string` | No | `/examples/audio.mp3` | URL to the audio file (WAV/MP3 format supported) |
-| `wav_base64` | `string` | No | `/examples/audio.mp3` | Base64 encoded string of the audio file (WAV/MP3 format supported) |
+| Parameter    | Type     | Required | Default               | Description                                                        |
+| ------------ | -------- | -------- | --------------------- | ------------------------------------------------------------------ |
+| `wav_path`   | `string` | No       | `/examples/audio.mp3` | Local path to the audio file (WAV/MP3 format supported)            |
+| `wav_url`    | `string` | No       | `/examples/audio.mp3` | URL to the audio file (WAV/MP3 format supported)                   |
+| `wav_base64` | `string` | No       | `/examples/audio.mp3` | Base64 encoded string of the audio file (WAV/MP3 format supported) |
 
 #### Multi-Person Audio Input (for multi-person workflows - use only one)
-| Parameter | Type | Required | Default | Description |
-| --- | --- | --- | --- | --- |
-| `wav_path_2` | `string` | No | Same as first audio | Local path to the second audio file for multi-person scenarios |
-| `wav_url_2` | `string` | No | Same as first audio | URL to the second audio file for multi-person scenarios |
-| `wav_base64_2` | `string` | No | Same as first audio | Base64 encoded string of the second audio file for multi-person scenarios |
+| Parameter      | Type     | Required | Default             | Description                                                               |
+| -------------- | -------- | -------- | ------------------- | ------------------------------------------------------------------------- |
+| `wav_path_2`   | `string` | No       | Same as first audio | Local path to the second audio file for multi-person scenarios            |
+| `wav_url_2`    | `string` | No       | Same as first audio | URL to the second audio file for multi-person scenarios                   |
+| `wav_base64_2` | `string` | No       | Same as first audio | Base64 encoded string of the second audio file for multi-person scenarios |
 
 #### Other Parameters
-| Parameter | Type | Required | Default | Description |
-| --- | --- | --- | --- | --- |
-| `prompt` | `string` | No | `"A person talking naturally"` | Description text for the video to be generated |
-| `width` | `integer` | No | `512` | Width of the output video in pixels |
-| `height` | `integer` | No | `512` | Height of the output video in pixels |
-| `max_frame` | `integer` | No | Auto-calculated | Maximum number of frames for the output video (automatically calculated based on audio duration if not provided) |
-| `force_offload` | `boolean` | No | `true` | Whether to offload model components to CPU during inference. Set to `false` for ~1.5x faster processing on high-VRAM GPUs (24GB+). Default `true` prevents OOM on smaller GPUs. |
-| `network_volume` | `boolean` | No | `false` | Whether to use network volume for output storage. If `true`, returns file path instead of Base64 data |
+| Parameter          | Type      | Required | Default                        | Description                                                                                                                                                                     |
+| ------------------ | --------- | -------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `prompt`           | `string`  | No       | `"A person talking naturally"` | Description text for the video to be generated                                                                                                                                  |
+| `width`            | `integer` | No       | `512`                          | Width of the output video in pixels (e.g. `288`, `384`, `512`)                                                                                                                   |
+| `height`           | `integer` | No       | `512`                          | Height of the output video in pixels (e.g. `512`)                                                                                                                               |
+| `fps`              | `integer` | No       | `25`                           | Frame rate for the output video and audio sync alignment (e.g. `15`, `20`, `25`)                                                                                                |
+| `steps`            | `integer` | No       | `6`                            | Sampling steps for WanVideoSampler model inference (default `6` with distilled LoRA)                                                                                           |
+| `max_frame`        | `integer` | No       | Auto-calculated                | Maximum number of frames for the output video (automatically calculated based on exact audio duration)                                                                         |
+| `force_offload`    | `boolean` | No       | `true`                         | Whether to offload model components to CPU during inference. Set to `false` for ~1.5x faster processing on high-VRAM GPUs (24GB+). Default `true` prevents OOM on smaller GPUs. |
+| `s3_endpoint`      | `string`  | No       | Env: `S3_ENDPOINT`             | S3 / Cloudflare R2 endpoint URL (e.g. `https://<account_id>.r2.cloudflarestorage.com`)                                                                                         |
+| `s3_bucket`        | `string`  | No       | Env: `S3_BUCKET`               | S3 / Cloudflare R2 bucket name                                                                                                                                                  |
+| `s3_access_key`    | `string`  | No       | Env: `S3_ACCESS_KEY`           | S3 / Cloudflare R2 Access Key ID                                                                                                                                                |
+| `s3_secret_key`    | `string`  | No       | Env: `S3_SECRET_KEY`           | S3 / Cloudflare R2 Secret Access Key                                                                                                                                            |
+| `s3_public_domain` | `string`  | No       | Env: `S3_PUBLIC_DOMAIN`        | Public domain / CDN URL (e.g. `https://pub-xxxx.r2.dev`)                                                                                                                        |
 
 **Request Examples:**
 
@@ -99,10 +100,13 @@ The `input` object must contain the following fields. Images, videos, and audio 
     "input_type": "image",
     "person_count": "single",
     "prompt": "A person is talking in a natural way.",
-    "image_url": "https://example.com/portrait.jpg",
-    "wav_url": "https://example.com/audio.wav",
-    "width": 512,
-    "height": 512
+    "image_url": "https://pub-ea10d712b4c34b959b2c604b1cd8339c.r2.dev/Frases/imagen.png",
+    "wav_url": "https://pub-ea10d712b4c34b959b2c604b1cd8339c.r2.dev/Frases/audio_corto.wav",
+    "width": 288,
+    "height": 512,
+    "fps": 25,
+    "steps": 6,
+    "force_offload": false
   }
 }
 ```
@@ -144,7 +148,7 @@ The `input` object must contain the following fields. Images, videos, and audio 
   "input": {
     "input_type": "video",
     "person_count": "multi",
-    "prompt": "Two people talking in a video.",
+    "prompt": "Two people singing a duet.",
     "video_url": "https://example.com/input_video.mp4",
     "wav_url": "https://example.com/audio1.wav",
     "wav_url_2": "https://example.com/audio2.wav",
@@ -154,99 +158,37 @@ The `input` object must contain the following fields. Images, videos, and audio 
 }
 ```
 
-#### 5. Using Base64 (I2V Single Example)
-```json
-{
-  "input": {
-    "input_type": "image",
-    "person_count": "single",
-    "prompt": "A person is talking in a natural way.",
-    "image_base64": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD...",
-    "wav_base64": "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=",
-    "width": 512,
-    "height": 512
-  }
-}
-```
-
-#### 6. Using Local Paths (V2V Single Example)
-```json
-{
-  "input": {
-    "input_type": "video",
-    "person_count": "single",
-    "prompt": "A person is talking in a natural way.",
-    "video_path": "/my_volume/input_video.mp4",
-    "wav_path": "/my_volume/audio.wav",
-    "width": 512,
-    "height": 512
-  }
-}
-```
-
-#### 7. Using Network Volume for Output (I2V Single Example)
-```json
-{
-  "input": {
-    "input_type": "image",
-    "person_count": "single",
-    "prompt": "A person talking in a natural way.",
-    "image_url": "https://example.com/portrait.jpg",
-    "wav_url": "https://example.com/audio.wav",
-    "width": 512,
-    "height": 512,
-    "network_volume": true
-  }
-}
-```
-
 ### Output
 
 #### Success
 
-If the job is successful, it returns a JSON object with the generated video. The response format depends on the `network_volume` parameter.
+When the video generation completes successfully, the handler automatically selects the final assembled video with audio (`*-audio.mp4`), uploads it to your S3 / Cloudflare R2 bucket, and returns the direct public URL.
 
-**When `network_volume` is `false` (default):**
+| Parameter   | Type     | Description                                                     |
+| ----------- | -------- | --------------------------------------------------------------- |
+| `video_url` | `string` | Public URL to stream and download the final generated MP4 video |
 
-| Parameter | Type | Description |
-| --- | --- | --- |
-| `video` | `string` | Base64 encoded video file data. |
-
-**Success Response Example (Base64):**
+**Success Response Example:**
 
 ```json
 {
-  "video": "data:video/mp4;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
-}
-```
-
-**When `network_volume` is `true`:**
-
-| Parameter | Type | Description |
-| --- | --- | --- |
-| `video_path` | `string` | File path to the generated video stored in the network volume. |
-
-**Success Response Example (Network Volume):**
-
-```json
-{
-  "video_path": "/runpod-volume/infinitetalk_task_12345.mp4"
+  "video_url": "https://pub-ea10d712b4c34b959b2c604b1cd8339c.r2.dev/outputs/infinitetalk_task_a1b2c3d4.mp4"
 }
 ```
 
 #### Error
 
-If the job fails, it returns a JSON object containing an error message.
+If the job fails, it returns a JSON object containing an error description.
 
-| Parameter | Type | Description |
-| --- | --- | --- |
-| `error` | `string` | Description of the error that occurred. |
+| Parameter | Type     | Description                             |
+| --------- | -------- | --------------------------------------- |
+| `error`   | `string` | Description of the error that occurred. |
 
 **Error Response Example:**
 
 ```json
 {
-  "error": "비디오를 찾을 수 없습니다."
+  "error": "Error al subir el video a S3: ..."
 }
 ```
 
@@ -295,11 +237,11 @@ This template includes four workflow configurations that are automatically selec
 The handler automatically selects the appropriate workflow based on your input parameters:
 
 | input_type | person_count | Selected Workflow |
-|------------|--------------|-------------------|
-| `"image"` | `"single"` | I2V_single.json |
-| `"image"` | `"multi"` | I2V_multi.json |
-| `"video"` | `"single"` | V2V_single.json |
-| `"video"` | `"multi"` | V2V_multi.json |
+| ---------- | ------------ | ----------------- |
+| `"image"`  | `"single"`   | I2V_single.json   |
+| `"image"`  | `"multi"`    | I2V_multi.json    |
+| `"video"`  | `"single"`   | V2V_single.json   |
+| `"video"`  | `"multi"`    | V2V_multi.json    |
 
 The workflows are based on ComfyUI and include all necessary nodes for InfiniteTalk processing. Each workflow is optimized for its specific use case and includes the appropriate model configurations.
 

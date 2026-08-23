@@ -1,0 +1,14 @@
+{
+    "input": {
+        "image_url": "https://pub-ea10d712b4c34b959b2c604b1cd8339c.r2.dev/Frases/imagen.png",
+        "wav_url": "https://pub-ea10d712b4c34b959b2c604b1cd8339c.r2.dev/Frases/audio_corto.wav",
+        "width": 288,
+        "height": 512,
+        "fps": 15,
+        "steps": 6,
+        "force_offload": false
+    },
+    "policy": {
+        "ttl": 3600000
+    }
+}

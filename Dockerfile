@@ -1,5 +1,9 @@
 FROM wlsdml1114/engui_genai-base_blackwell:1.1 AS runtime
 
+# Desactivar chequeo estricto de versión de driver del host para compatibilidad con todos los nodos de RunPod
+ENV NVIDIA_DISABLE_REQUIRE=1
+ENV NVIDIA_REQUIRE_CUDA=""
+
 # wget 설치 (URL 다운로드를 위해)
 RUN apt-get update && apt-get install -y wget && rm -rf /var/lib/apt/lists/*
 
