@@ -96,6 +96,21 @@ def process_input(input_data, temp_dir, output_filename, input_type):
         return save_base64_to_file(input_data, temp_dir, output_filename)
     else:
         raise Exception(f"Tipo de entrada no soportado: {input_type}")
+def prepare_comfy_file(file_path):
+    """
+    Asegura que el archivo esté ubicado en /ComfyUI/input y devuelve
+    el nombre de archivo relativo que los nodos de ComfyUI (LoadImage, LoadAudio) requieren.
+    """
+    if not file_path:
+        return file_path
+    comfy_input_dir = "/ComfyUI/input"
+    if os.path.exists(comfy_input_dir):
+        file_name = os.path.basename(file_path)
+        target_path = os.path.join(comfy_input_dir, file_name)
+        if os.path.abspath(file_path) != os.path.abspath(target_path):
+            shutil.copy2(file_path, target_path)
+        return file_name
+    return file_path
 
 
 def queue_prompt(prompt, input_type="image", person_count="single"):
@@ -474,12 +489,16 @@ def handler(job):
         logger.info(f"Tamaño de segundo archivo de audio: {os.path.getsize(wav_path_2)} bytes")
 
     # Inyección de parámetros en los nodos de ComfyUI
-    if input_type == "image":
-        prompt["284"]["inputs"]["image"] = media_path
-    else:
-        prompt["228"]["inputs"]["video"] = media_path
+    comfy_media = prepare_comfy_file(media_path)
+    comfy_audio = prepare_comfy_file(wav_path)
+    comfy_audio_2 = prepare_comfy_file(wav_path_2) if wav_path_2 else None
 
-    prompt["125"]["inputs"]["audio"] = wav_path
+    if input_type == "image":
+        prompt["284"]["inputs"]["image"] = comfy_media
+    else:
+        prompt["228"]["inputs"]["video"] = comfy_media
+
+    prompt["125"]["inputs"]["audio"] = comfy_audio
     prompt["241"]["inputs"]["positive_prompt"] = prompt_text
     prompt["245"]["inputs"]["value"] = width
     prompt["246"]["inputs"]["value"] = height
@@ -493,13 +512,13 @@ def handler(job):
         elif c_type == "VHS_VideoCombine" and "frame_rate" in node_data.get("inputs", {}):
             node_data["inputs"]["frame_rate"] = fps
 
-    if person_count == "multi":
+    if person_count == "multi" and comfy_audio_2:
         if input_type == "image":
             if "307" in prompt:
-                prompt["307"]["inputs"]["audio"] = wav_path_2
+                prompt["307"]["inputs"]["audio"] = comfy_audio_2
         else:
             if "313" in prompt:
-                prompt["313"]["inputs"]["audio"] = wav_path_2
+                prompt["313"]["inputs"]["audio"] = comfy_audio_2
 
     ws_url = f"ws://{server_address}:8188/ws?clientId={client_id}"
     logger.info(f"Conectando a WebSocket: {ws_url}")
