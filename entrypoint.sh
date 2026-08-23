@@ -5,7 +5,7 @@ set -e
 
 # Iniciar ComfyUI en segundo plano
 echo "Iniciando ComfyUI en segundo plano..."
-python /ComfyUI/main.py --listen --use-sage-attention &
+python /ComfyUI/main.py --listen &
 
 # Esperar a que ComfyUI esté listo
 echo "Esperando que ComfyUI esté listo para recibir peticiones..."

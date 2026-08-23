@@ -468,6 +468,13 @@ def handler(job):
         logger.info(f"✅ Nodo {sampler_node_id} (WanVideoSampler) configurado con force_offload={force_offload}")
     else:
         logger.warning("⚠️ Advertencia: Nodo WanVideoSampler no encontrado. Se usarán valores predeterminados del workflow.")
+
+    # Configurar attention_mode (por defecto 'sdpa' para compatibilidad universal con PyTorch en todas las GPUs)
+    attention_mode = job_input.get("attention_mode", "sdpa")
+    for node_id, node_data in prompt.items():
+        if node_data.get("class_type") == "WanVideoModelLoader" and "attention_mode" in node_data.get("inputs", {}):
+            node_data["inputs"]["attention_mode"] = attention_mode
+            logger.info(f"✅ Nodo {node_id} (WanVideoModelLoader) configurado con attention_mode={attention_mode}")
     # ------------------------------------------------------------------
 
     # Validar existencia de archivos locales antes de encolar en ComfyUI
