@@ -140,9 +140,10 @@ def queue_prompt(prompt, input_type="image", person_count="single"):
         logger.info(f"Prompt enviado exitosamente: {result}")
         return result
     except urllib.error.HTTPError as e:
+        error_body = e.read().decode("utf-8")
         logger.error(f"Error HTTP ocurrido: {e.code} - {e.reason}")
-        logger.error(f"Cuerpo de la respuesta: {e.read().decode('utf-8')}")
-        raise
+        logger.error(f"Cuerpo de la respuesta: {error_body}")
+        raise Exception(f"ComfyUI HTTP {e.code} Error ({e.reason}): {error_body}")
     except Exception as e:
         logger.error(f"Error al enviar el prompt: {e}")
         raise
@@ -314,20 +315,25 @@ def handler(job):
     workflow_path = get_workflow_path(input_type, person_count)
     logger.info(f"Archivo de workflow seleccionado: {workflow_path}")
 
+    # Determinar directorio de trabajo temporal (preferir /ComfyUI/input para compatibilidad nativa)
+    comfy_input_dir = "/ComfyUI/input"
+    temp_dir = comfy_input_dir if os.path.isdir(comfy_input_dir) else os.path.abspath(task_id)
+    os.makedirs(temp_dir, exist_ok=True)
+
     # Procesar archivo multimedia de entrada (imagen o video)
     media_path = None
     if input_type == "image":
         if "image_path" in job_input:
             media_path = process_input(
-                job_input["image_path"], task_id, "input_image.jpg", "path"
+                job_input["image_path"], temp_dir, f"{task_id}_input_image.jpg", "path"
             )
         elif "image_url" in job_input:
             media_path = process_input(
-                job_input["image_url"], task_id, "input_image.jpg", "url"
+                job_input["image_url"], temp_dir, f"{task_id}_input_image.jpg", "url"
             )
         elif "image_base64" in job_input:
             media_path = process_input(
-                job_input["image_base64"], task_id, "input_image.jpg", "base64"
+                job_input["image_base64"], temp_dir, f"{task_id}_input_image.jpg", "base64"
             )
         else:
             media_path = "/examples/image.jpg"
@@ -335,15 +341,15 @@ def handler(job):
     else:  # video
         if "video_path" in job_input:
             media_path = process_input(
-                job_input["video_path"], task_id, "input_video.mp4", "path"
+                job_input["video_path"], temp_dir, f"{task_id}_input_video.mp4", "path"
             )
         elif "video_url" in job_input:
             media_path = process_input(
-                job_input["video_url"], task_id, "input_video.mp4", "url"
+                job_input["video_url"], temp_dir, f"{task_id}_input_video.mp4", "url"
             )
         elif "video_base64" in job_input:
             media_path = process_input(
-                job_input["video_base64"], task_id, "input_video.mp4", "base64"
+                job_input["video_base64"], temp_dir, f"{task_id}_input_video.mp4", "base64"
             )
         else:
             media_path = "/examples/image.jpg"
@@ -355,15 +361,15 @@ def handler(job):
 
     if "wav_path" in job_input:
         wav_path = process_input(
-            job_input["wav_path"], task_id, "input_audio.wav", "path"
+            job_input["wav_path"], temp_dir, f"{task_id}_input_audio.wav", "path"
         )
     elif "wav_url" in job_input:
         wav_path = process_input(
-            job_input["wav_url"], task_id, "input_audio.wav", "url"
+            job_input["wav_url"], temp_dir, f"{task_id}_input_audio.wav", "url"
         )
     elif "wav_base64" in job_input:
         wav_path = process_input(
-            job_input["wav_base64"], task_id, "input_audio.wav", "base64"
+            job_input["wav_base64"], temp_dir, f"{task_id}_input_audio.wav", "base64"
         )
     else:
         wav_path = "/examples/audio.mp3"
@@ -373,15 +379,15 @@ def handler(job):
     if person_count == "multi":
         if "wav_path_2" in job_input:
             wav_path_2 = process_input(
-                job_input["wav_path_2"], task_id, "input_audio_2.wav", "path"
+                job_input["wav_path_2"], temp_dir, f"{task_id}_input_audio_2.wav", "path"
             )
         elif "wav_url_2" in job_input:
             wav_path_2 = process_input(
-                job_input["wav_url_2"], task_id, "input_audio_2.wav", "url"
+                job_input["wav_url_2"], temp_dir, f"{task_id}_input_audio_2.wav", "url"
             )
         elif "wav_base64_2" in job_input:
             wav_path_2 = process_input(
-                job_input["wav_base64_2"], task_id, "input_audio_2.wav", "base64"
+                job_input["wav_base64_2"], temp_dir, f"{task_id}_input_audio_2.wav", "base64"
             )
         else:
             wav_path_2 = wav_path
@@ -415,6 +421,11 @@ def handler(job):
         logger.info(f"Ruta de segundo audio: {wav_path_2}")
 
     prompt = load_workflow(workflow_path)
+
+    # Limpiar nodos huérfanos no conectados que fallan en la validación de ComfyUI
+    for orphan_id in ["300", "306"]:
+        if orphan_id in prompt and prompt[orphan_id].get("class_type") == "Wav2VecModelLoader":
+            prompt.pop(orphan_id, None)
 
     # ------------------------------------------------------------------
     # Configuración dinámica de Force Offload y Steps ----

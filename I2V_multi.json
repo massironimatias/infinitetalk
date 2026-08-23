@@ -388,17 +388,6 @@
       "title": "미리보기 아무거나"
     }
   },
-  "300": {
-    "inputs": {
-      "model": "wav2vec2-chinese-base_fp16.safetensors",
-      "base_precision": "fp16",
-      "load_device": "main_device"
-    },
-    "class_type": "Wav2VecModelLoader",
-    "_meta": {
-      "title": "Wav2vec2 Model Loader"
-    }
-  },
   "301": {
     "inputs": {
       "model_name": "MelBandRoformer_fp16.safetensors"
