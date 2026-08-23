@@ -138,6 +138,58 @@ def get_video_dimensions(video_path):
     return None, None
 
 
+def run_ffmpeg_encode(input_video, output_video, vf_str=None, audio_source=None):
+    """
+    Ejecuta ffmpeg con aceleración por GPU (h264_nvenc) con fallback automático a CPU ultrafast.
+    """
+    cmd_base = ["ffmpeg", "-y", "-i", input_video]
+    if audio_source:
+        cmd_base.extend(["-i", audio_source])
+
+    if vf_str:
+        cmd_base.extend(["-vf", vf_str])
+
+    # Intento 1: Aceleración por GPU NVIDIA NVENC (ultra-rápido en RTX 4090)
+    gpu_cmd = list(cmd_base) + [
+        "-c:v",
+        "h264_nvenc",
+        "-preset",
+        "p4",
+        "-cq",
+        "18",
+        "-pix_fmt",
+        "yuv420p",
+    ]
+    if audio_source:
+        gpu_cmd.extend(["-map", "0:v:0", "-map", "1:a:0?", "-c:a", "copy"])
+    else:
+        gpu_cmd.extend(["-c:a", "copy"])
+    gpu_cmd.append(output_video)
+
+    try:
+        subprocess.run(gpu_cmd, capture_output=True, text=True, check=True)
+        return output_video
+    except Exception as e:
+        logger.warning(f"NVENC GPU no disponible ({e}). Usando fallback CPU ultrafast...")
+        cpu_cmd = list(cmd_base) + [
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-crf",
+            "18",
+            "-pix_fmt",
+            "yuv420p",
+        ]
+        if audio_source:
+            cpu_cmd.extend(["-map", "0:v:0", "-map", "1:a:0?", "-c:a", "copy"])
+        else:
+            cpu_cmd.extend(["-c:a", "copy"])
+        cpu_cmd.append(output_video)
+        subprocess.run(cpu_cmd, capture_output=True, text=True, check=True)
+        return output_video
+
+
 def ai_upscale_video(input_video_path, output_video_path):
     """
     Aplica super-resolución de video mediante el modelo de IA Real-ESRGAN (spandrel)
@@ -166,7 +218,7 @@ def ai_upscale_video(input_video_path, output_video_path):
 
         target_w = w * 2
         target_h = h * 2
-        logger.info(f"🚀 Procesando {total_frames} frames con Real-ESRGAN AI ({w}x{h} -> {target_w}x{target_h})...")
+        logger.info(f"🚀 Procesando {total_frames} frames con Real-ESRGAN AI en GPU ({w}x{h} -> {target_w}x{target_h})...")
 
         temp_no_audio = output_video_path.replace(".mp4", "_ai_temp.mp4")
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
@@ -221,31 +273,8 @@ def ai_upscale_video(input_video_path, output_video_path):
         del model
         torch.cuda.empty_cache()
 
-        # Unir audio original al video mejorado con IA
-        cmd = [
-            "ffmpeg",
-            "-y",
-            "-i",
-            temp_no_audio,
-            "-i",
-            input_video_path,
-            "-c:v",
-            "libx264",
-            "-preset",
-            "fast",
-            "-crf",
-            "18",
-            "-pix_fmt",
-            "yuv420p",
-            "-map",
-            "0:v:0",
-            "-map",
-            "1:a:0?",
-            "-c:a",
-            "copy",
-            output_video_path,
-        ]
-        subprocess.run(cmd, capture_output=True, text=True, check=True)
+        # Unir audio original al video mejorado con IA usando encoder acelerado
+        run_ffmpeg_encode(temp_no_audio, output_video_path, audio_source=input_video_path)
         if os.path.exists(temp_no_audio):
             os.remove(temp_no_audio)
         logger.info(f"✅ Video mejorado con IA Real-ESRGAN exitosamente: {output_video_path}")
@@ -284,13 +313,10 @@ def enhance_video_quality(
         w, h = get_video_dimensions(current_input)
         if w and h:
             if h > w:
-                # Video vertical (e.g. 9:16, 3:4, 4:5): Preserva aspect ratio exacto con altura 1920
                 scale_filter = "scale=-2:1920:flags=lanczos,unsharp=5:5:0.6:5:5:0.0"
             elif w > h:
-                # Video horizontal (e.g. 16:9, 4:3): Preserva aspect ratio exacto con altura 1080
                 scale_filter = "scale=-2:1080:flags=lanczos,unsharp=5:5:0.6:5:5:0.0"
             else:
-                # Video cuadrado (1:1): 1080x1080
                 scale_filter = "scale=1080:1080:flags=lanczos,unsharp=5:5:0.6:5:5:0.0"
         else:
             scale_filter = "scale='if(gt(ih,iw),-2,1920)':'if(gt(ih,iw),1920,-2)':flags=lanczos,unsharp=5:5:0.6:5:5:0.0"
@@ -303,37 +329,14 @@ def enhance_video_quality(
 
     if vf_filters:
         vf_str = ",".join(vf_filters)
-        cmd = [
-            "ffmpeg",
-            "-y",
-            "-i",
-            current_input,
-            "-vf",
-            vf_str,
-            "-c:v",
-            "libx264",
-            "-preset",
-            "fast",
-            "-crf",
-            "18",
-            "-pix_fmt",
-            "yuv420p",
-            "-c:a",
-            "copy",
-            output_video_path,
-        ]
-
         try:
-            subprocess.run(cmd, capture_output=True, text=True, check=True)
+            res_path = run_ffmpeg_encode(current_input, output_video_path, vf_str=vf_str)
             elapsed = time.time() - start_time
             logger.info(
-                f"✅ Post-procesamiento completado en {elapsed:.2f}s -> {output_video_path} "
-                f"({os.path.getsize(output_video_path)} bytes)"
+                f"✅ Post-procesamiento completado en {elapsed:.2f}s -> {res_path} "
+                f"({os.path.getsize(res_path)} bytes)"
             )
-            return output_video_path
-        except subprocess.CalledProcessError as e:
-            logger.error(f"❌ Error en post-procesamiento ffmpeg: {e.stderr}")
-            return current_input
+            return res_path
         except Exception as e:
             logger.error(f"❌ Error inesperado en post-procesamiento: {e}")
             return current_input
