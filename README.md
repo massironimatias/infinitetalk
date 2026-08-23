@@ -85,6 +85,8 @@ The `input` object must contain the following fields. Images, videos, and audio 
 | `steps`            | `integer` | No       | `6`                            | Sampling steps for WanVideoSampler model inference (default `6` with distilled LoRA)                                                                                           |
 | `max_frame`        | `integer` | No       | Auto-calculated                | Maximum number of frames for the output video (automatically calculated based on exact audio duration)                                                                         |
 | `force_offload`    | `boolean` | No       | `true`                         | Whether to offload model components to CPU during inference. Set to `false` for ~1.5x faster processing on high-VRAM GPUs (24GB+). Default `true` prevents OOM on smaller GPUs. |
+| `upscale_1080p`    | `boolean` | No       | `false`                        | Ultra-fast post-processing upscale to 1080p with detail sharpening filter (Lanczos + Unsharp)                                                                                   |
+| `target_fps`       | `integer` | No       | `None`                         | Smooth motion interpolation to target frame rate (e.g. `60` for 60 FPS) without increasing AI model render time                                                                 |
 | `s3_endpoint`      | `string`  | No       | Env: `S3_ENDPOINT`             | S3 / Cloudflare R2 endpoint URL (e.g. `https://<account_id>.r2.cloudflarestorage.com`)                                                                                         |
 | `s3_bucket`        | `string`  | No       | Env: `S3_BUCKET`               | S3 / Cloudflare R2 bucket name                                                                                                                                                  |
 | `s3_access_key`    | `string`  | No       | Env: `S3_ACCESS_KEY`           | S3 / Cloudflare R2 Access Key ID                                                                                                                                                |
@@ -93,7 +95,7 @@ The `input` object must contain the following fields. Images, videos, and audio 
 
 **Request Examples:**
 
-#### 1. I2V Single (Image-to-Video Single Person)
+#### 1. I2V Single (Image-to-Video Single Person - 1080p @ 60 FPS)
 ```json
 {
   "input": {
@@ -106,7 +108,9 @@ The `input` object must contain the following fields. Images, videos, and audio 
     "height": 512,
     "fps": 25,
     "steps": 6,
-    "force_offload": false
+    "force_offload": false,
+    "upscale_1080p": true,
+    "target_fps": 60
   }
 }
 ```

@@ -6,7 +6,9 @@
         "height": 512,
         "fps": 15,
         "steps": 6,
-        "force_offload": false
+        "force_offload": false,
+        "upscale_1080p": true,
+        "target_fps": 60
     },
     "policy": {
         "ttl": 3600000

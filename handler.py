@@ -113,6 +113,104 @@ def prepare_comfy_file(file_path):
     return file_path
 
 
+def get_video_dimensions(video_path):
+    """Obtiene las dimensiones (ancho, alto) de un video usando ffprobe."""
+    try:
+        cmd = [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height",
+            "-of",
+            "csv=p=0",
+            video_path,
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        parts = res.stdout.strip().split(",")
+        if len(parts) >= 2:
+            return int(parts[0]), int(parts[1])
+    except Exception as e:
+        logger.warning(f"No se pudieron obtener dimensiones con ffprobe: {e}")
+    return None, None
+
+
+def enhance_video_quality(
+    input_video_path, output_video_path, upscale_1080p=False, target_fps=None
+):
+    """
+    Aplica reescalado a 1080p (Lanczos + filtro unsharp) e interpolación fluida a 60 FPS
+    mediante ffmpeg acelerado.
+    """
+    if not upscale_1080p and not target_fps:
+        return input_video_path
+
+    logger.info(
+        f"✨ Iniciando post-procesamiento rápido (upscale_1080p={upscale_1080p}, target_fps={target_fps})..."
+    )
+    start_time = time.time()
+
+    vf_filters = []
+
+    if upscale_1080p:
+        w, h = get_video_dimensions(input_video_path)
+        if w and h:
+            if h > w:
+                scale_filter = "scale=1080:1920:flags=lanczos,unsharp=5:5:0.6:5:5:0.0"
+            elif w > h:
+                scale_filter = "scale=1920:1080:flags=lanczos,unsharp=5:5:0.6:5:5:0.0"
+            else:
+                scale_filter = "scale=1080:1080:flags=lanczos,unsharp=5:5:0.6:5:5:0.0"
+        else:
+            scale_filter = "scale='if(gt(ih,iw),1080,1920)':'if(gt(ih,iw),1920,1080)':flags=lanczos,unsharp=5:5:0.6:5:5:0.0"
+
+        vf_filters.append(scale_filter)
+
+    if target_fps and int(target_fps) > 0:
+        fps_filter = f"minterpolate='fps={int(target_fps)}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1'"
+        vf_filters.append(fps_filter)
+
+    vf_str = ",".join(vf_filters)
+
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        input_video_path,
+        "-vf",
+        vf_str,
+        "-c:v",
+        "libx264",
+        "-preset",
+        "fast",
+        "-crf",
+        "18",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "copy",
+        output_video_path,
+    ]
+
+    try:
+        subprocess.run(cmd, capture_output=True, text=True, check=True)
+        elapsed = time.time() - start_time
+        logger.info(
+            f"✅ Post-procesamiento completado en {elapsed:.2f}s -> {output_video_path} "
+            f"({os.path.getsize(output_video_path)} bytes)"
+        )
+        return output_video_path
+    except subprocess.CalledProcessError as e:
+        logger.error(f"❌ Error en post-procesamiento ffmpeg: {e.stderr}")
+        logger.warning("Se utilizará el video original sin post-procesar como respaldo.")
+        return input_video_path
+    except Exception as e:
+        logger.error(f"❌ Error inesperado en post-procesamiento: {e}")
+        return input_video_path
+
+
 def queue_prompt(prompt, input_type="image", person_count="single"):
     """Envía el flujo de trabajo (workflow) a la cola de ComfyUI."""
     url = f"http://{server_address}:8188/prompt"
@@ -619,6 +717,21 @@ def handler(job):
     if not os.path.exists(selected_video_path):
         logger.error(f"❌ El archivo de video seleccionado no existe: {selected_video_path}")
         return {"error": f"El archivo de video seleccionado no existe: {selected_video_path}"}
+
+    # =========================================================================
+    # Post-procesamiento opcional: Upscale a 1080p y/o interpolación a 60 FPS
+    # =========================================================================
+    upscale_1080p = job_input.get("upscale_1080p", False) or job_input.get("upscale", False)
+    target_fps = job_input.get("target_fps") or (60 if job_input.get("fps_60", False) else None)
+
+    if upscale_1080p or target_fps:
+        enhanced_path = os.path.join(temp_dir, f"{task_id}_enhanced.mp4")
+        selected_video_path = enhance_video_quality(
+            selected_video_path,
+            enhanced_path,
+            upscale_1080p=upscale_1080p,
+            target_fps=target_fps,
+        )
 
     # =========================================================================
     # OBJETIVO 2: Subida directa a S3 / Cloudflare R2 con boto3
