@@ -206,28 +206,22 @@ def get_videos(ws, prompt, input_type="image", person_count="single"):
     history = get_history(prompt_id)[prompt_id]
     logger.info(f"Nodos de salida encontrados: {len(history['outputs'])}")
 
-    for node_id in history["outputs"]:
+    for node_id in history.get("outputs", {}):
         node_output = history["outputs"][node_id]
         videos_output = []
-        if "gifs" in node_output:
-            logger.info(
-                f"Nodo {node_id}: encontrados {len(node_output['gifs'])} videos"
-            )
-            for idx, video in enumerate(node_output["gifs"]):
-                video_path = video["fullpath"]
-                logger.info(f"Ruta de archivo de video: {video_path}")
-
-                if os.path.exists(video_path):
-                    file_size = os.path.getsize(video_path)
-                    logger.info(
-                        f"Video {idx+1} encontrado: {video_path} (Tamaño: {file_size} bytes)"
-                    )
-                else:
-                    logger.warning(f"El archivo de video no existe: {video_path}")
-
-                videos_output.append(video_path)
-        else:
-            logger.info(f"Nodo {node_id} sin salida de videos")
+        for key in ["gifs", "images", "videos"]:
+            if key in node_output:
+                for idx, video in enumerate(node_output[key]):
+                    video_path = video.get("fullpath")
+                    if not video_path and "filename" in video:
+                        subfolder = video.get("subfolder", "")
+                        video_path = os.path.join("/ComfyUI/output", subfolder, video["filename"])
+                    if video_path and os.path.exists(video_path):
+                        file_size = os.path.getsize(video_path)
+                        logger.info(
+                            f"Video encontrado en nodo {node_id} ({key}): {video_path} (Tamaño: {file_size} bytes)"
+                        )
+                        videos_output.append(video_path)
         output_videos[node_id] = videos_output
 
     logger.info(f"Rutas de videos recopiladas de {len(output_videos)} nodos")
@@ -580,6 +574,17 @@ def handler(job):
     logger.info(f"Total de videos generados encontrados: {len(all_videos)}")
     for v in all_videos:
         logger.info(f"  - Candidato: {v} ({os.path.getsize(v)} bytes)")
+
+    if not all_videos:
+        logger.warning("Buscando videos directamente en /ComfyUI/output como fallback...")
+        comfy_output_dir = "/ComfyUI/output"
+        if os.path.exists(comfy_output_dir):
+            for root, _, files in os.walk(comfy_output_dir):
+                for f in files:
+                    if f.lower().endswith(".mp4"):
+                        full_f = os.path.join(root, f)
+                        if os.path.exists(full_f):
+                            all_videos.append(full_f)
 
     if not all_videos:
         logger.error("❌ No se encontraron archivos de video generados válidos.")
