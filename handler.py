@@ -7,23 +7,26 @@ import uuid
 import logging
 import urllib.request
 import urllib.parse
-import binascii  # Base64 에러 처리를 위해 import
+import binascii
 import subprocess
 import librosa
 import shutil
+import time
+import boto3
+from botocore.client import Config
 
-# 로깅 설정
+# Configuración de logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
 def truncate_base64_for_log(base64_str, max_length=50):
-    """Base64 문자열을 로깅용으로 앞부분만 잘라서 반환"""
+    """Trunca cadenas Base64 largas para visualización en logs."""
     if not base64_str:
         return "None"
     if len(base64_str) <= max_length:
         return base64_str
-    return f"{base64_str[:max_length]}... (총 {len(base64_str)} 문자)"
+    return f"{base64_str[:max_length]}... (total {len(base64_str)} caracteres)"
 
 
 server_address = os.getenv("SERVER_ADDRESS", "127.0.0.1")
@@ -31,9 +34,8 @@ client_id = str(uuid.uuid4())
 
 
 def download_file_from_url(url, output_path):
-    """URL에서 파일을 다운로드하는 함수"""
+    """Descarga un archivo desde una URL usando wget."""
     try:
-        # wget을 사용하여 파일 다운로드
         result = subprocess.run(
             ["wget", "-O", output_path, "--no-verbose", "--timeout=30", url],
             capture_output=True,
@@ -43,91 +45,90 @@ def download_file_from_url(url, output_path):
 
         if result.returncode == 0:
             logger.info(
-                f"✅ URL에서 파일을 성공적으로 다운로드했습니다: {url} -> {output_path}"
+                f"✅ Archivo descargado exitosamente desde URL: {url} -> {output_path}"
             )
             return output_path
         else:
-            logger.error(f"❌ wget 다운로드 실패: {result.stderr}")
-            raise Exception(f"URL 다운로드 실패: {result.stderr}")
+            logger.error(f"❌ Fallo en la descarga con wget: {result.stderr}")
+            raise Exception(f"Fallo al descargar URL: {result.stderr}")
     except subprocess.TimeoutExpired:
-        logger.error("❌ 다운로드 시간 초과")
-        raise Exception("다운로드 시간 초과")
+        logger.error("❌ Tiempo de espera agotado al descargar archivo")
+        raise Exception("Tiempo de descarga agotado")
     except Exception as e:
-        logger.error(f"❌ 다운로드 중 오류 발생: {e}")
-        raise Exception(f"다운로드 중 오류 발생: {e}")
+        logger.error(f"❌ Error durante la descarga: {e}")
+        raise Exception(f"Error durante la descarga: {e}")
 
 
 def save_base64_to_file(base64_data, temp_dir, output_filename):
-    """Base64 데이터를 파일로 저장하는 함수"""
+    """Decodifica y guarda datos Base64 en un archivo local."""
     try:
-        # Base64 문자열 디코딩
         decoded_data = base64.b64decode(base64_data)
-
-        # 디렉토리가 존재하지 않으면 생성
         os.makedirs(temp_dir, exist_ok=True)
-
-        # 파일로 저장
         file_path = os.path.abspath(os.path.join(temp_dir, output_filename))
         with open(file_path, "wb") as f:
             f.write(decoded_data)
 
-        logger.info(f"✅ Base64 입력을 '{file_path}' 파일로 저장했습니다.")
+        logger.info(f"✅ Entrada Base64 guardada en '{file_path}'.")
         return file_path
     except (binascii.Error, ValueError) as e:
-        logger.error(f"❌ Base64 디코딩 실패: {e}")
-        raise Exception(f"Base64 디코딩 실패: {e}")
+        logger.error(f"❌ Fallo al decodificar Base64: {e}")
+        raise Exception(f"Fallo al decodificar Base64: {e}")
 
 
 def process_input(input_data, temp_dir, output_filename, input_type):
-    """입력 데이터를 처리하여 파일 경로를 반환하는 함수"""
+    """Procesa los datos de entrada según su tipo y devuelve la ruta local del archivo."""
     if input_type == "path":
-        # 경로인 경우 그대로 반환
-        logger.info(f"📁 경로 입력 처리: {input_data}")
+        logger.info(f"📁 Procesando entrada de ruta local: {input_data}")
         return input_data
     elif input_type == "url":
-        # URL인 경우 다운로드
-        logger.info(f"🌐 URL 입력 처리: {input_data}")
+        logger.info(f"🌐 Procesando entrada desde URL: {input_data}")
         os.makedirs(temp_dir, exist_ok=True)
+        # Preservar la extensión original del archivo desde la URL si existe
+        parsed_path = urllib.parse.urlparse(input_data).path
+        _, ext = os.path.splitext(parsed_path)
+        if ext and not output_filename.endswith(ext.lower()):
+            base_name, _ = os.path.splitext(output_filename)
+            output_filename = f"{base_name}{ext}"
         file_path = os.path.abspath(os.path.join(temp_dir, output_filename))
         return download_file_from_url(input_data, file_path)
     elif input_type == "base64":
-        # Base64인 경우 디코딩하여 저장
-        logger.info(f"🔢 Base64 입력 처리")
+        logger.info("🔢 Procesando entrada en Base64")
         return save_base64_to_file(input_data, temp_dir, output_filename)
     else:
-        raise Exception(f"지원하지 않는 입력 타입: {input_type}")
+        raise Exception(f"Tipo de entrada no soportado: {input_type}")
 
 
 def queue_prompt(prompt, input_type="image", person_count="single"):
+    """Envía el flujo de trabajo (workflow) a la cola de ComfyUI."""
     url = f"http://{server_address}:8188/prompt"
-    logger.info(f"Queueing prompt to: {url}")
+    logger.info(f"Encolando prompt en: {url}")
     p = {"prompt": prompt, "client_id": client_id}
     data = json.dumps(p).encode("utf-8")
 
-    # 디버깅을 위해 워크플로우 내용 로깅
-    logger.info(f"워크플로우 노드 수: {len(prompt)}")
+    # Logging para depuración del workflow
+    logger.info(f"Total de nodos en el workflow: {len(prompt)}")
     if input_type == "image":
         logger.info(
-            f"이미지 노드(284) 설정: {prompt.get('284', {}).get('inputs', {}).get('image', 'NOT_FOUND')}"
+            f"Configuración nodo de imagen (284): {prompt.get('284', {}).get('inputs', {}).get('image', 'NO_ENCONTRADO')}"
         )
     else:
         logger.info(
-            f"비디오 노드(228) 설정: {prompt.get('228', {}).get('inputs', {}).get('video', 'NOT_FOUND')}"
+            f"Configuración nodo de video (228): {prompt.get('228', {}).get('inputs', {}).get('video', 'NO_ENCONTRADO')}"
         )
     logger.info(
-        f"오디오 노드(125) 설정: {prompt.get('125', {}).get('inputs', {}).get('audio', 'NOT_FOUND')}"
+        f"Configuración nodo de audio (125): {prompt.get('125', {}).get('inputs', {}).get('audio', 'NO_ENCONTRADO')}"
     )
     logger.info(
-        f"텍스트 노드(241) 설정: {prompt.get('241', {}).get('inputs', {}).get('positive_prompt', 'NOT_FOUND')}"
+        f"Configuración nodo de texto (241): {prompt.get('241', {}).get('inputs', {}).get('positive_prompt', 'NO_ENCONTRADO')}"
     )
     if person_count == "multi":
         if "307" in prompt:
             logger.info(
-                f"두 번째 오디오 노드(307) 설정: {prompt.get('307', {}).get('inputs', {}).get('audio', 'NOT_FOUND')}"
+                f"Configuración segundo nodo de audio (307): {prompt.get('307', {}).get('inputs', {}).get('audio', 'NO_ENCONTRADO')}"
             )
         elif "313" in prompt:
             logger.info(
-                f"두 번째 오디오 노드(313) 설정: {prompt.get('313', {}).get('inputs', {}).get('audio', 'NOT_FOUND')}"
+                f"Configuración segundo nodo de audio (313): {prompt.get('313', {}).get('inputs', {}).get('audio', 'NO_ENCONTRADO')}"
             )
 
     req = urllib.request.Request(url, data=data)
@@ -136,20 +137,21 @@ def queue_prompt(prompt, input_type="image", person_count="single"):
     try:
         response = urllib.request.urlopen(req)
         result = json.loads(response.read())
-        logger.info(f"프롬프트 전송 성공: {result}")
+        logger.info(f"Prompt enviado exitosamente: {result}")
         return result
     except urllib.error.HTTPError as e:
-        logger.error(f"HTTP 에러 발생: {e.code} - {e.reason}")
-        logger.error(f"응답 내용: {e.read().decode('utf-8')}")
+        logger.error(f"Error HTTP ocurrido: {e.code} - {e.reason}")
+        logger.error(f"Cuerpo de la respuesta: {e.read().decode('utf-8')}")
         raise
     except Exception as e:
-        logger.error(f"프롬프트 전송 중 오류: {e}")
+        logger.error(f"Error al enviar el prompt: {e}")
         raise
 
 
 def get_image(filename, subfolder, folder_type):
+    """Obtiene una imagen generada desde el endpoint /view de ComfyUI."""
     url = f"http://{server_address}:8188/view"
-    logger.info(f"Getting image from: {url}")
+    logger.info(f"Obteniendo imagen desde: {url}")
     data = {"filename": filename, "subfolder": subfolder, "type": folder_type}
     url_values = urllib.parse.urlencode(data)
     with urllib.request.urlopen(f"{url}?{url_values}") as response:
@@ -157,15 +159,17 @@ def get_image(filename, subfolder, folder_type):
 
 
 def get_history(prompt_id):
+    """Obtiene el historial de ejecución del prompt desde ComfyUI."""
     url = f"http://{server_address}:8188/history/{prompt_id}"
-    logger.info(f"Getting history from: {url}")
+    logger.info(f"Consultando historial en: {url}")
     with urllib.request.urlopen(url) as response:
         return json.loads(response.read())
 
 
 def get_videos(ws, prompt, input_type="image", person_count="single"):
+    """Ejecuta el workflow mediante WebSocket y recopila las rutas de los videos generados."""
     prompt_id = queue_prompt(prompt, input_type, person_count)["prompt_id"]
-    logger.info(f"워크플로우 실행 시작: prompt_id={prompt_id}")
+    logger.info(f"Iniciando ejecución del workflow: prompt_id={prompt_id}")
 
     output_videos = {}
     while True:
@@ -175,54 +179,53 @@ def get_videos(ws, prompt, input_type="image", person_count="single"):
             if message["type"] == "executing":
                 data = message["data"]
                 if data["node"] is not None:
-                    logger.info(f"노드 실행 중: {data['node']}")
+                    logger.info(f"Ejecutando nodo: {data['node']}")
                 if data["node"] is None and data["prompt_id"] == prompt_id:
-                    logger.info("워크플로우 실행 완료")
+                    logger.info("Ejecución del workflow completada exitosamente")
                     break
         else:
             continue
 
-    logger.info(f"히스토리 조회 중: prompt_id={prompt_id}")
+    logger.info(f"Consultando historial para prompt_id={prompt_id}")
     history = get_history(prompt_id)[prompt_id]
-    logger.info(f"출력 노드 수: {len(history['outputs'])}")
+    logger.info(f"Nodos de salida encontrados: {len(history['outputs'])}")
 
     for node_id in history["outputs"]:
         node_output = history["outputs"][node_id]
         videos_output = []
         if "gifs" in node_output:
             logger.info(
-                f"노드 {node_id}에서 {len(node_output['gifs'])}개의 비디오 발견"
+                f"Nodo {node_id}: encontrados {len(node_output['gifs'])} videos"
             )
             for idx, video in enumerate(node_output["gifs"]):
-                # fullpath를 그대로 반환 (base64 인코딩하지 않음)
                 video_path = video["fullpath"]
-                logger.info(f"비디오 파일 경로: {video_path}")
+                logger.info(f"Ruta de archivo de video: {video_path}")
 
-                # 파일 존재 여부 및 크기 확인
                 if os.path.exists(video_path):
                     file_size = os.path.getsize(video_path)
                     logger.info(
-                        f"비디오 {idx+1} 발견: {video_path} (크기: {file_size} bytes)"
+                        f"Video {idx+1} encontrado: {video_path} (Tamaño: {file_size} bytes)"
                     )
                 else:
-                    logger.warning(f"비디오 파일이 존재하지 않습니다: {video_path}")
+                    logger.warning(f"El archivo de video no existe: {video_path}")
 
                 videos_output.append(video_path)
         else:
-            logger.info(f"노드 {node_id}에 비디오 출력 없음")
+            logger.info(f"Nodo {node_id} sin salida de videos")
         output_videos[node_id] = videos_output
 
-    logger.info(f"총 {len(output_videos)}개 노드에서 비디오 파일 경로 수집 완료")
+    logger.info(f"Rutas de videos recopiladas de {len(output_videos)} nodos")
     return output_videos
 
 
 def load_workflow(workflow_path):
-    with open(workflow_path, "r") as file:
+    """Carga la definición del workflow desde un archivo JSON."""
+    with open(workflow_path, "r", encoding="utf-8") as file:
         return json.load(file)
 
 
 def get_workflow_path(input_type, person_count):
-    """input_type과 person_count에 따라 적절한 워크플로우 파일 경로를 반환"""
+    """Devuelve la ruta del archivo de workflow correspondiente según input_type y person_count."""
     if input_type == "image":
         if person_count == "single":
             return "/I2V_single.json"
@@ -236,42 +239,55 @@ def get_workflow_path(input_type, person_count):
 
 
 def get_audio_duration(audio_path):
-    """오디오 파일의 길이(초)를 반환"""
+    """Devuelve la duración de un archivo de audio en segundos."""
     try:
         duration = librosa.get_duration(path=audio_path)
         return duration
     except Exception as e:
-        logger.warning(f"오디오 길이 계산 실패 ({audio_path}): {e}")
+        logger.warning(f"No se pudo calcular la duración del audio ({audio_path}): {e}")
         return None
 
 
 def calculate_max_frames_from_audio(wav_path, wav_path_2=None, fps=25):
-    """오디오 길이를 기반으로 max_frames를 계산"""
+    """Calcula max_frames según la duración del archivo de audio más largo."""
     durations = []
 
-    # 첫 번째 오디오 길이 계산
+    # Duración del primer audio
     duration1 = get_audio_duration(wav_path)
     if duration1 is not None:
         durations.append(duration1)
-        logger.info(f"첫 번째 오디오 길이: {duration1:.2f}초")
+        logger.info(f"Duración del primer audio: {duration1:.2f}s")
 
-    # 두 번째 오디오 길이 계산 (multi person인 경우)
+    # Duración del segundo audio (en caso de multi-persona)
     if wav_path_2:
         duration2 = get_audio_duration(wav_path_2)
         if duration2 is not None:
             durations.append(duration2)
-            logger.info(f"두 번째 오디오 길이: {duration2:.2f}초")
+            logger.info(f"Duración del segundo audio: {duration2:.2f}s")
 
     if not durations:
-        logger.warning("오디오 길이를 계산할 수 없습니다. 기본값 81을 사용합니다.")
+        logger.warning("No se pudo determinar la duración del audio. Usando valor por defecto (81 frames).")
         return 81
 
-    # 가장 긴 오디오 길이를 기준으로 max_frames 계산
+    # Calcular los frames exactos necesarios para el audio
+    import math
     max_duration = max(durations)
-    max_frames = int(max_duration * fps) + 81
+    needed_frames = int(math.ceil(max_duration * fps))
+
+    # InfiniteTalk requiere al menos 81 frames para el bloque inicial
+    if needed_frames <= 81:
+        max_frames = 81
+    else:
+        # Wan2.1 requiere que (frames - 1) sea múltiplo de 4 para alineación temporal VAE
+        remainder = (needed_frames - 1) % 4
+        if remainder != 0:
+            max_frames = needed_frames + (4 - remainder)
+        else:
+            max_frames = needed_frames
 
     logger.info(
-        f"가장 긴 오디오 길이: {max_duration:.2f}초, 계산된 max_frames: {max_frames}"
+        f"Duración máxima de audio: {max_duration:.2f}s -> frames exactos requeridos: {needed_frames}, "
+        f"max_frames alineados con Wan2.1: {max_frames}"
     )
     return max_frames
 
@@ -279,29 +295,28 @@ def calculate_max_frames_from_audio(wav_path, wav_path_2=None, fps=25):
 def handler(job):
     job_input = job.get("input", {})
 
-    # job_input을 로깅할 때 base64 데이터는 truncate해서 출력
+    # Logging del payload de entrada (truncando Base64 si existe)
     log_input = job_input.copy()
     for key in ["image_base64", "video_base64", "wav_base64", "wav_base64_2"]:
         if key in log_input:
             log_input[key] = truncate_base64_for_log(log_input[key])
 
-    logger.info(f"Received job input: {log_input}")
+    logger.info(f"Trabajo recibido con entrada: {log_input}")
     task_id = f"task_{uuid.uuid4()}"
 
-    # 입력 타입과 인물 수 확인
-    input_type = job_input.get("input_type", "image")  # "image" 또는 "video"
-    person_count = job_input.get("person_count", "single")  # "single" 또는 "multi"
+    # Verificación de tipo de entrada y cantidad de personas
+    input_type = job_input.get("input_type", "image")  # "image" o "video"
+    person_count = job_input.get("person_count", "single")  # "single" o "multi"
 
-    logger.info(f"워크플로우 타입: {input_type}, 인물 수: {person_count}")
+    logger.info(f"Tipo de workflow: {input_type}, Modo de personas: {person_count}")
 
-    # 워크플로우 파일 경로 결정
+    # Determinar ruta del workflow
     workflow_path = get_workflow_path(input_type, person_count)
-    logger.info(f"사용할 워크플로우: {workflow_path}")
+    logger.info(f"Archivo de workflow seleccionado: {workflow_path}")
 
-    # 이미지/비디오 입력 처리
+    # Procesar archivo multimedia de entrada (imagen o video)
     media_path = None
     if input_type == "image":
-        # 이미지 입력 처리 (image_path, image_url, image_base64 중 하나만 사용)
         if "image_path" in job_input:
             media_path = process_input(
                 job_input["image_path"], task_id, "input_image.jpg", "path"
@@ -315,11 +330,9 @@ def handler(job):
                 job_input["image_base64"], task_id, "input_image.jpg", "base64"
             )
         else:
-            # 기본값 사용
             media_path = "/examples/image.jpg"
-            logger.info("기본 이미지 파일을 사용합니다: /examples/image.jpg")
+            logger.info("Usando imagen predeterminada: /examples/image.jpg")
     else:  # video
-        # 비디오 입력 처리 (video_path, video_url, video_base64 중 하나만 사용)
         if "video_path" in job_input:
             media_path = process_input(
                 job_input["video_path"], task_id, "input_video.mp4", "path"
@@ -333,13 +346,12 @@ def handler(job):
                 job_input["video_base64"], task_id, "input_video.mp4", "base64"
             )
         else:
-            # 기본값 사용 (비디오가 없는 경우 기본 이미지 사용)
             media_path = "/examples/image.jpg"
-            logger.info("기본 이미지 파일을 사용합니다: /examples/image.jpg")
+            logger.info("Usando medio predeterminado: /examples/image.jpg")
 
-    # 오디오 입력 처리 (wav_path, wav_url, wav_base64 중 하나만 사용)
+    # Procesar archivo de audio principal
     wav_path = None
-    wav_path_2 = None  # 다중 인물용 두 번째 오디오
+    wav_path_2 = None  # Segundo audio para multi-persona
 
     if "wav_path" in job_input:
         wav_path = process_input(
@@ -354,11 +366,10 @@ def handler(job):
             job_input["wav_base64"], task_id, "input_audio.wav", "base64"
         )
     else:
-        # 기본값 사용
         wav_path = "/examples/audio.mp3"
-        logger.info("기본 오디오 파일을 사용합니다: /examples/audio.mp3")
+        logger.info("Usando audio predeterminado: /examples/audio.mp3")
 
-    # 다중 인물용 두 번째 오디오 처리
+    # Procesar segundo audio si es multi-persona
     if person_count == "multi":
         if "wav_path_2" in job_input:
             wav_path_2 = process_input(
@@ -373,242 +384,301 @@ def handler(job):
                 job_input["wav_base64_2"], task_id, "input_audio_2.wav", "base64"
             )
         else:
-            # 기본값 사용 (첫 번째 오디오와 동일)
             wav_path_2 = wav_path
-            logger.info("두 번째 오디오가 없어 첫 번째 오디오를 사용합니다.")
+            logger.info("Segundo audio no especificado, reutilizando primer audio.")
 
-    # 필수 필드 검증 및 기본값 설정
+    # Parámetros y valores predeterminados
     prompt_text = job_input.get("prompt", "A person talking naturally")
     width = job_input.get("width", 512)
     height = job_input.get("height", 512)
+    fps = job_input.get("fps", 25)
+    steps = job_input.get("steps")
 
-    # max_frame 설정 (입력이 없으면 오디오 길이 기반으로 자동 계산)
+    # Configuración de max_frame (calculado automáticamente si no se provee)
     max_frame = job_input.get("max_frame")
     if max_frame is None:
         logger.info(
-            "max_frame이 입력되지 않았습니다. 오디오 길이를 기반으로 자동 계산합니다."
+            "max_frame no fue especificado. Calculando automáticamente en base al audio..."
         )
         max_frame = calculate_max_frames_from_audio(
-            wav_path, wav_path_2 if person_count == "multi" else None
+            wav_path, wav_path_2 if person_count == "multi" else None, fps=fps
         )
     else:
-        logger.info(f"사용자 지정 max_frame: {max_frame}")
+        logger.info(f"max_frame especificado por el usuario: {max_frame}")
 
     logger.info(
-        f"워크플로우 설정: prompt='{prompt_text}', width={width}, height={height}, max_frame={max_frame}"
+        f"Parámetros del workflow: prompt='{prompt_text}', width={width}, height={height}, fps={fps}, max_frame={max_frame}"
     )
-    logger.info(f"미디어 경로: {media_path}")
-    logger.info(f"오디오 경로: {wav_path}")
+    logger.info(f"Ruta de medio de entrada: {media_path}")
+    logger.info(f"Ruta de audio principal: {wav_path}")
     if person_count == "multi":
-        logger.info(f"두 번째 오디오 경로: {wav_path_2}")
+        logger.info(f"Ruta de segundo audio: {wav_path_2}")
 
     prompt = load_workflow(workflow_path)
 
     # ------------------------------------------------------------------
-    # 동적 Force Offload 설정
+    # Configuración dinámica de Force Offload y Steps
     # ------------------------------------------------------------------
-    # 1. 입력에서 force_offload 읽기 (기본값 True: 작은 GPU에서 OOM 방지)
     force_offload = job_input.get("force_offload", True)
-    logger.info(f"🔧 설정: force_offload={force_offload}")
+    logger.info(f"🔧 Configuración: force_offload={force_offload}")
 
-    # 2. WanVideoSampler 노드에 force_offload 파라미터 주입
     sampler_node_id = None
     preferred_id = "128"
 
-    # 효율성을 위해 먼저 선호 ID(128) 확인
     if preferred_id in prompt and prompt[preferred_id].get("class_type") == "WanVideoSampler":
         sampler_node_id = preferred_id
     else:
-        # ID가 다른 경우 class type으로 검색 (폴백)
         for node_id, node_data in prompt.items():
             if node_data.get("class_type") == "WanVideoSampler":
                 sampler_node_id = node_id
                 break
 
-    # sampler 노드를 찾은 경우 force_offload 파라미터 주입
     if sampler_node_id:
-        # setdefault를 사용하여 'inputs' 딕셔너리가 없으면 생성
         inputs = prompt[sampler_node_id].setdefault("inputs", {})
         inputs["force_offload"] = force_offload
-        logger.info(f"✅ 노드 {sampler_node_id} (WanVideoSampler) 업데이트됨: force_offload={force_offload}")
+        if steps is not None:
+            inputs["steps"] = int(steps)
+            logger.info(f"✅ Nodo {sampler_node_id} (WanVideoSampler) configurado con steps={steps}")
+        logger.info(f"✅ Nodo {sampler_node_id} (WanVideoSampler) configurado con force_offload={force_offload}")
     else:
-        logger.warning("⚠️ 경고: WanVideoSampler 노드를 찾을 수 없습니다. 워크플로우 기본값을 사용합니다.")
+        logger.warning("⚠️ Advertencia: Nodo WanVideoSampler no encontrado. Se usarán valores predeterminados del workflow.")
     # ------------------------------------------------------------------
 
-    # 파일 존재 여부 확인
+    # Validar existencia de archivos locales antes de encolar en ComfyUI
     if not os.path.exists(media_path):
-        logger.error(f"미디어 파일이 존재하지 않습니다: {media_path}")
-        return {"error": f"미디어 파일을 찾을 수 없습니다: {media_path}"}
+        logger.error(f"El archivo multimedia no existe: {media_path}")
+        return {"error": f"Archivo multimedia no encontrado: {media_path}"}
 
     if not os.path.exists(wav_path):
-        logger.error(f"오디오 파일이 존재하지 않습니다: {wav_path}")
-        return {"error": f"오디오 파일을 찾을 수 없습니다: {wav_path}"}
+        logger.error(f"El archivo de audio no existe: {wav_path}")
+        return {"error": f"Archivo de audio no encontrado: {wav_path}"}
 
     if person_count == "multi" and wav_path_2 and not os.path.exists(wav_path_2):
-        logger.error(f"두 번째 오디오 파일이 존재하지 않습니다: {wav_path_2}")
-        return {"error": f"두 번째 오디오 파일을 찾을 수 없습니다: {wav_path_2}"}
+        logger.error(f"El segundo archivo de audio no existe: {wav_path_2}")
+        return {"error": f"Segundo archivo de audio no encontrado: {wav_path_2}"}
 
-    logger.info(f"미디어 파일 크기: {os.path.getsize(media_path)} bytes")
-    logger.info(f"오디오 파일 크기: {os.path.getsize(wav_path)} bytes")
+    logger.info(f"Tamaño de archivo multimedia: {os.path.getsize(media_path)} bytes")
+    logger.info(f"Tamaño de archivo de audio: {os.path.getsize(wav_path)} bytes")
     if person_count == "multi" and wav_path_2:
-        logger.info(f"두 번째 오디오 파일 크기: {os.path.getsize(wav_path_2)} bytes")
+        logger.info(f"Tamaño de segundo archivo de audio: {os.path.getsize(wav_path_2)} bytes")
 
-    # 워크플로우 노드 설정
+    # Inyección de parámetros en los nodos de ComfyUI
     if input_type == "image":
-        # I2V 워크플로우: 이미지 입력 설정
         prompt["284"]["inputs"]["image"] = media_path
     else:
-        # V2V 워크플로우: 비디오 입력 설정
         prompt["228"]["inputs"]["video"] = media_path
 
-    # 공통 설정
     prompt["125"]["inputs"]["audio"] = wav_path
     prompt["241"]["inputs"]["positive_prompt"] = prompt_text
     prompt["245"]["inputs"]["value"] = width
     prompt["246"]["inputs"]["value"] = height
-
     prompt["270"]["inputs"]["value"] = max_frame
 
-    # 다중 인물용 두 번째 오디오 설정
+    # Ajuste dinámico de FPS en los nodos correspondientes
+    for node_id, node_data in prompt.items():
+        c_type = node_data.get("class_type")
+        if c_type == "MultiTalkWav2VecEmbeds" and "fps" in node_data.get("inputs", {}):
+            node_data["inputs"]["fps"] = fps
+        elif c_type == "VHS_VideoCombine" and "frame_rate" in node_data.get("inputs", {}):
+            node_data["inputs"]["frame_rate"] = fps
+
     if person_count == "multi":
-        # 워크플로우 타입에 따라 두 번째 오디오 노드 설정
-        if input_type == "image":  # I2V_multi.json의 경우
+        if input_type == "image":
             if "307" in prompt:
                 prompt["307"]["inputs"]["audio"] = wav_path_2
-        else:  # V2V_multi.json의 경우
+        else:
             if "313" in prompt:
                 prompt["313"]["inputs"]["audio"] = wav_path_2
 
     ws_url = f"ws://{server_address}:8188/ws?clientId={client_id}"
-    logger.info(f"Connecting to WebSocket: {ws_url}")
+    logger.info(f"Conectando a WebSocket: {ws_url}")
 
-    # 먼저 HTTP 연결이 가능한지 확인
+    # Verificar disponibilidad HTTP del servidor ComfyUI
     http_url = f"http://{server_address}:8188/"
-    logger.info(f"Checking HTTP connection to: {http_url}")
+    logger.info(f"Verificando conexión HTTP en: {http_url}")
 
-    # HTTP 연결 확인 (최대 1분)
     max_http_attempts = 180
     for http_attempt in range(max_http_attempts):
         try:
-            import urllib.request
-
             response = urllib.request.urlopen(http_url, timeout=5)
-            logger.info(f"HTTP 연결 성공 (시도 {http_attempt+1})")
+            logger.info(f"Conexión HTTP establecida (intento {http_attempt+1})")
             break
         except Exception as e:
             logger.warning(
-                f"HTTP 연결 실패 (시도 {http_attempt+1}/{max_http_attempts}): {e}"
+                f"Esperando respuesta HTTP (intento {http_attempt+1}/{max_http_attempts}): {e}"
             )
             if http_attempt == max_http_attempts - 1:
                 raise Exception(
-                    "ComfyUI 서버에 연결할 수 없습니다. 서버가 실행 중인지 확인하세요."
+                    "No se pudo conectar al servidor ComfyUI. Verifique que el servicio esté corriendo."
                 )
             time.sleep(1)
 
     ws = websocket.WebSocket()
-    # 웹소켓 연결 시도 (최대 3분)
-    max_attempts = int(180 / 5)  # 3분 (1초에 한 번씩 시도)
+    max_attempts = int(180 / 5)
     for attempt in range(max_attempts):
-        import time
-
         try:
             ws.connect(ws_url)
-            logger.info(f"웹소켓 연결 성공 (시도 {attempt+1})")
+            logger.info(f"Conexión WebSocket establecida (intento {attempt+1})")
             break
         except Exception as e:
-            logger.warning(f"웹소켓 연결 실패 (시도 {attempt+1}/{max_attempts}): {e}")
+            logger.warning(f"Esperando WebSocket (intento {attempt+1}/{max_attempts}): {e}")
             if attempt == max_attempts - 1:
-                raise Exception("웹소켓 연결 시간 초과 (3분)")
+                raise Exception("Tiempo de espera agotado al conectar por WebSocket (3 min)")
             time.sleep(5)
+
     videos = get_videos(ws, prompt, input_type, person_count)
     ws.close()
-    logger.info("웹소켓 연결 종료")
+    logger.info("Conexión WebSocket cerrada")
 
-    # 비디오가 없는 경우 처리
-    output_video_path = None
-    logger.info("출력 비디오 검색 중...")
+    # =========================================================================
+    # OBJETIVO 1: Selección inteligente del video final
+    # =========================================================================
+    logger.info("🔍 Recopilando y evaluando videos de salida de todos los nodos...")
+    all_videos = []
+    for node_id, file_list in videos.items():
+        for file_path in file_list:
+            if file_path and os.path.exists(file_path):
+                all_videos.append(file_path)
 
-    for node_id in videos:
-        if videos[node_id]:
-            output_video_path = videos[node_id][0]
-            logger.info(f"노드 {node_id}에서 출력 비디오 발견: {output_video_path}")
-            break
-        else:
-            logger.info(f"노드 {node_id}는 비어있음")
+    logger.info(f"Total de videos generados encontrados: {len(all_videos)}")
+    for v in all_videos:
+        logger.info(f"  - Candidato: {v} ({os.path.getsize(v)} bytes)")
 
-    if not output_video_path:
-        logger.error("출력 비디오를 찾을 수 없습니다. 모든 노드가 비어있습니다.")
-        return {"error": "비디오를 찾을 수 없습니다."}
+    if not all_videos:
+        logger.error("❌ No se encontraron archivos de video generados válidos.")
+        return {"error": "No se encontraron videos de salida generados."}
 
-    # 비디오 파일 존재 여부 확인
-    if not os.path.exists(output_video_path):
-        logger.error(f"출력 비디오 파일이 존재하지 않습니다: {output_video_path}")
-        return {"error": f"비디오 파일을 찾을 수 없습니다: {output_video_path}"}
+    # Prioridad 1: Seleccionar el archivo que termine en -audio.mp4 (video ensamblado con audio)
+    audio_videos = [v for v in all_videos if v.lower().endswith("-audio.mp4")]
 
-    # network_volume 파라미터 확인
-    use_network_volume = job_input.get("network_volume", False)
-    logger.info(f"네트워크 볼륨 사용 여부: {use_network_volume}")
-
-    if use_network_volume:
-        # 네트워크 볼륨 사용: 파일 복사
-        logger.info("네트워크 볼륨에 비디오 복사 시작")
-        try:
-            # 결과 비디오 파일 경로 생성
-            output_filename = f"infinitetalk_{task_id}.mp4"
-            output_path = f"/runpod-volume/{output_filename}"
-            logger.info(f"원본 파일: {output_video_path}")
-            logger.info(f"대상 경로: {output_path}")
-
-            # 원본 파일 크기 확인
-            source_file_size = os.path.getsize(output_video_path)
-            logger.info(f"원본 파일 크기: {source_file_size} bytes")
-
-            # 파일 복사 (shutil.copy2는 메타데이터도 함께 복사)
-            shutil.copy2(output_video_path, output_path)
-            logger.info("파일 복사 완료")
-
-            # 복사된 파일 크기 확인
-            copied_file_size = os.path.getsize(output_path)
-            logger.info(f"복사된 파일 크기: {copied_file_size} bytes")
-
-            if source_file_size == copied_file_size:
-                logger.info(
-                    f"✅ 결과 비디오를 '{output_path}'에 성공적으로 복사했습니다"
-                )
-            else:
-                logger.warning(
-                    f"⚠️ 파일 크기가 일치하지 않습니다: 원본={source_file_size}, 복사본={copied_file_size}"
-                )
-
-            return {"video_path": output_path}
-
-        except Exception as e:
-            logger.error(f"❌ 비디오 복사 실패: {e}")
-            return {"error": f"비디오 복사 실패: {e}"}
+    if audio_videos:
+        selected_video_path = max(audio_videos, key=os.path.getsize)
+        logger.info(
+            f"🎯 Video seleccionado [Prioridad 1: Video ensamblado con audio]: {selected_video_path} "
+            f"({os.path.getsize(selected_video_path)} bytes)"
+        )
     else:
-        # 네트워크 볼륨 미사용: Base64 인코딩하여 반환
-        logger.info("Base64 인코딩 시작")
-        logger.info(f"비디오 파일 경로: {output_video_path}")
-
-        try:
-            # 파일 크기 확인
-            file_size = os.path.getsize(output_video_path)
-            logger.info(f"원본 파일 크기: {file_size} bytes")
-
-            # 파일을 읽어 base64 인코딩
-            with open(output_video_path, "rb") as f:
-                video_data = base64.b64encode(f.read()).decode("utf-8")
-
-            encoded_size = len(video_data)
-            logger.info(f"Base64 인코딩 완료: {encoded_size} 문자")
+        # Prioridad 2: Seleccionar el archivo .mp4 con mayor tamaño en bytes
+        mp4_videos = [v for v in all_videos if v.lower().endswith(".mp4")]
+        if mp4_videos:
+            selected_video_path = max(mp4_videos, key=os.path.getsize)
             logger.info(
-                f"✅ Base64 인코딩된 비디오 반환: {truncate_base64_for_log(video_data)}"
+                f"🎯 Video seleccionado [Prioridad 2: Mayor tamaño .mp4]: {selected_video_path} "
+                f"({os.path.getsize(selected_video_path)} bytes)"
             )
-            return {"video": video_data}
+        else:
+            selected_video_path = max(all_videos, key=os.path.getsize)
+            logger.info(
+                f"🎯 Video seleccionado [Fallback: Mayor tamaño general]: {selected_video_path} "
+                f"({os.path.getsize(selected_video_path)} bytes)"
+            )
 
-        except Exception as e:
-            logger.error(f"❌ Base64 인코딩 실패: {e}")
-            return {"error": f"Base64 인코딩 실패: {e}"}
+    # Verificación final de existencia del archivo seleccionado
+    if not os.path.exists(selected_video_path):
+        logger.error(f"❌ El archivo de video seleccionado no existe: {selected_video_path}")
+        return {"error": f"El archivo de video seleccionado no existe: {selected_video_path}"}
+
+    # =========================================================================
+    # OBJETIVO 2: Subida directa a S3 / Cloudflare R2 con boto3
+    # =========================================================================
+    s3_endpoint = (
+        job_input.get("s3_endpoint")
+        or os.getenv("S3_ENDPOINT")
+        or os.getenv("S3_ENDPOINT_URL")
+    )
+    s3_bucket = (
+        job_input.get("s3_bucket")
+        or os.getenv("S3_BUCKET")
+        or os.getenv("S3_BUCKET_NAME")
+    )
+    s3_access_key = (
+        job_input.get("s3_access_key")
+        or os.getenv("S3_ACCESS_KEY")
+        or os.getenv("S3_ACCESS_KEY_ID")
+        or os.getenv("AWS_ACCESS_KEY_ID")
+    )
+    s3_secret_key = (
+        job_input.get("s3_secret_key")
+        or os.getenv("S3_SECRET_KEY")
+        or os.getenv("S3_SECRET_ACCESS_KEY")
+        or os.getenv("AWS_SECRET_ACCESS_KEY")
+    )
+    s3_public_domain = (
+        job_input.get("s3_public_domain")
+        or os.getenv("S3_PUBLIC_DOMAIN")
+    )
+    s3_region = (
+        job_input.get("s3_region")
+        or os.getenv("S3_REGION", "auto")
+    )
+
+    # Validar credenciales de S3
+    if not all([s3_endpoint, s3_bucket, s3_access_key, s3_secret_key]):
+        missing = []
+        if not s3_endpoint:
+            missing.append("s3_endpoint")
+        if not s3_bucket:
+            missing.append("s3_bucket")
+        if not s3_access_key:
+            missing.append("s3_access_key")
+        if not s3_secret_key:
+            missing.append("s3_secret_key")
+
+        error_msg = f"Faltan credenciales requeridas de S3: {', '.join(missing)}"
+        logger.error(f"❌ {error_msg}")
+        return {"error": error_msg}
+
+    try:
+        s3_key = f"outputs/infinitetalk_{task_id}.mp4"
+        file_size_mb = os.path.getsize(selected_video_path) / (1024 * 1024)
+        logger.info(
+            f"🚀 Subiendo video a S3: {selected_video_path} ({file_size_mb:.2f} MB) -> "
+            f"s3://{s3_bucket}/{s3_key}"
+        )
+
+        s3_client = boto3.client(
+            "s3",
+            endpoint_url=s3_endpoint,
+            aws_access_key_id=s3_access_key,
+            aws_secret_access_key=s3_secret_key,
+            region_name=s3_region if s3_region != "auto" else None,
+            config=Config(signature_version="s3v4"),
+        )
+
+        # Content-Type para reproducción nativa en navegadores
+        extra_args = {"ContentType": "video/mp4"}
+        s3_client.upload_file(
+            selected_video_path,
+            s3_bucket,
+            s3_key,
+            ExtraArgs=extra_args,
+        )
+        logger.info(f"✅ Video subido exitosamente a S3: s3://{s3_bucket}/{s3_key}")
+
+        # Construir la URL pública final
+        if s3_public_domain:
+            domain = s3_public_domain.strip().rstrip("/")
+            if not domain.startswith(("http://", "https://")):
+                domain = f"https://{domain}"
+            video_url = f"{domain}/{s3_key.lstrip('/')}"
+        else:
+            endpoint = s3_endpoint.strip().rstrip("/")
+            video_url = f"{endpoint}/{s3_bucket}/{s3_key.lstrip('/')}"
+        # Limpieza de archivos temporales del trabajo para evitar saturar el disco del worker
+        try:
+            temp_dir_path = os.path.abspath(task_id)
+            if os.path.exists(temp_dir_path):
+                shutil.rmtree(temp_dir_path, ignore_errors=True)
+                logger.info(f"🧹 Directorio temporal '{task_id}' limpiado con éxito.")
+        except Exception as cleanup_err:
+            logger.warning(f"No se pudo limpiar el directorio temporal: {cleanup_err}")
+
+        logger.info(f"🎉 URL pública final: {video_url}")
+        return {"video_url": video_url}
+
+    except Exception as e:
+        logger.error(f"❌ Error al subir el video a S3: {e}")
+        return {"error": f"Error al subir el video a S3: {str(e)}"}
 
 
 runpod.serverless.start({"handler": handler})
