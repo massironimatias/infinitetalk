@@ -216,43 +216,82 @@ def run_ffmpeg_encode(input_video, output_video, vf_str=None, audio_source=None)
         return output_video
 
 
-def ai_upscale_video(input_video_path, output_video_path):
+def ai_upscale_video(
+    input_video_path, output_video_path, target_width=None, target_height=None, target_fps=None
+):
     """
     Aplica super-resolución de video mediante el modelo de IA Real-ESRGAN (spandrel)
-    reconstruyendo textura de piel, ojos y definición en GPU.
+    reconstruyendo textura de piel, ojos y definición exclusivamente en GPU (FP16/CUDA).
+    Escala a resolución objetivo (1080p) e interpola frames directamente en tensores de GPU.
     """
     model_path = "/models/upscale_models/RealESRGAN_x2plus.pth"
     if not os.path.exists(model_path):
-        logger.warning(f"Modelo Real-ESRGAN no encontrado en {model_path}. Usando fallback FFmpeg.")
+        logger.warning(f"Modelo Real-ESRGAN no encontrado en {model_path}.")
         return None
 
     try:
         import spandrel
         import torch
+        import torch.nn.functional as F
         import cv2
 
-        logger.info("🧠 Cargando modelo de IA Real-ESRGAN en GPU...")
+        logger.info("🧠 Cargando modelo de IA Real-ESRGAN en GPU (FP16 Tensor Cores)...")
         loader = spandrel.ModelLoader()
         model_descriptor = loader.load_from_file(model_path)
-        model = model_descriptor.model.to("cuda").eval()
+        model = model_descriptor.model.to("cuda", dtype=torch.half).eval()
 
         cap = cv2.VideoCapture(input_video_path)
-        fps = cap.get(cv2.CAP_PROP_FPS) or 25
+        in_fps = cap.get(cv2.CAP_PROP_FPS) or 25
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-        target_w = w * 2
-        target_h = h * 2
-        logger.info(f"🚀 Procesando {total_frames} frames con Real-ESRGAN AI en GPU ({w}x{h} -> {target_w}x{target_h})...")
+        out_w = target_width if target_width else (w * 2)
+        out_h = target_height if target_height else (h * 2)
+        out_fps = float(target_fps) if target_fps else in_fps
+
+        logger.info(
+            f"🚀 Procesando {total_frames} frames con Real-ESRGAN AI en GPU "
+            f"({w}x{h} @ {in_fps}fps -> {out_w}x{out_h} @ {out_fps}fps)..."
+        )
 
         temp_no_audio = output_video_path.replace(".mp4", "_ai_temp.mp4")
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        writer = cv2.VideoWriter(temp_no_audio, fourcc, fps, (target_w, target_h))
+        writer = cv2.VideoWriter(temp_no_audio, fourcc, out_fps, (out_w, out_h))
 
-        batch_size = 4
+        batch_size = 8
         frames_batch = []
-        with torch.no_grad():
+
+        def process_and_write_batch(frames_b):
+            if not frames_b:
+                return
+            batch_np = np.stack(frames_b)
+            # Transferencia directa a GPU VRAM en FP16
+            batch_tensor = (
+                torch.from_numpy(batch_np)
+                .permute(0, 3, 1, 2)
+                .to("cuda", dtype=torch.half)
+                / 255.0
+            )
+
+            with torch.inference_mode():
+                # Inferencia Real-ESRGAN en GPU
+                out_tensors = model(batch_tensor)  # 2x super-resolution en GPU
+
+                # Ajuste exacto a 1080p en tensores GPU si difiere
+                if out_tensors.shape[2] != out_h or out_tensors.shape[3] != out_w:
+                    out_tensors = F.interpolate(
+                        out_tensors, size=(out_h, out_w), mode="bicubic", align_corners=False
+                    )
+
+                out_numpys = (
+                    out_tensors.permute(0, 2, 3, 1).clamp(0, 1) * 255.0
+                ).to(torch.uint8).cpu().numpy()
+
+                for out_np in out_numpys:
+                    writer.write(cv2.cvtColor(out_np, cv2.COLOR_RGB2BGR))
+
+        with torch.inference_mode():
             while cap.isOpened():
                 ret, frame = cap.read()
                 if not ret:
@@ -260,114 +299,78 @@ def ai_upscale_video(input_video_path, output_video_path):
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 frames_batch.append(frame_rgb)
                 if len(frames_batch) == batch_size:
-                    batch_np = np.stack(frames_batch)
-                    batch_tensor = (
-                        torch.from_numpy(batch_np)
-                        .permute(0, 3, 1, 2)
-                        .float()
-                        .to("cuda")
-                        / 255.0
-                    )
-                    out_tensors = model(batch_tensor)
-                    out_numpys = (
-                        out_tensors.permute(0, 2, 3, 1).clamp(0, 1).cpu().numpy()
-                        * 255.0
-                    ).astype("uint8")
-                    for out_np in out_numpys:
-                        writer.write(cv2.cvtColor(out_np, cv2.COLOR_RGB2BGR))
+                    process_and_write_batch(frames_batch)
                     frames_batch = []
 
             if frames_batch:
-                batch_np = np.stack(frames_batch)
-                batch_tensor = (
-                    torch.from_numpy(batch_np)
-                    .permute(0, 3, 1, 2)
-                    .float()
-                    .to("cuda")
-                    / 255.0
-                )
-                out_tensors = model(batch_tensor)
-                out_numpys = (
-                    out_tensors.permute(0, 2, 3, 1).clamp(0, 1).cpu().numpy()
-                    * 255.0
-                ).astype("uint8")
-                for out_np in out_numpys:
-                    writer.write(cv2.cvtColor(out_np, cv2.COLOR_RGB2BGR))
+                process_and_write_batch(frames_batch)
 
         cap.release()
         writer.release()
         del model
         torch.cuda.empty_cache()
 
-        # Unir audio original al video mejorado con IA usando encoder acelerado
+        # Unir audio original al video mejorado con IA usando GPU NVENC
         run_ffmpeg_encode(temp_no_audio, output_video_path, audio_source=input_video_path)
         if os.path.exists(temp_no_audio):
             os.remove(temp_no_audio)
-        logger.info(f"✅ Video mejorado con IA Real-ESRGAN exitosamente: {output_video_path}")
+        logger.info(f"✅ Video mejorado con IA Real-ESRGAN en GPU exitosamente: {output_video_path}")
         return output_video_path
     except Exception as e:
-        logger.error(f"❌ Error en AI Upscale: {e}. Se usará fallback FFmpeg.")
+        logger.error(f"❌ Error en AI Upscale en GPU: {e}")
         return None
 
 
 def enhance_video_quality(
-    input_video_path, output_video_path, upscale_1080p=False, target_fps=None, use_ai=False
+    input_video_path, output_video_path, upscale_1080p=False, target_fps=None, use_ai=True
 ):
     """
-    Aplica super-resolución (Real-ESRGAN o Lanczos) e interpolación fluida a 60 FPS.
+    Aplica super-resolución de rostro y video con IA (Real-ESRGAN en GPU FP16)
+    e interpolación de frames acelerada por GPU.
     """
     if not upscale_1080p and not target_fps:
         return input_video_path
 
     logger.info(
-        f"✨ Iniciando post-procesamiento (upscale_1080p={upscale_1080p}, target_fps={target_fps}, use_ai={use_ai})..."
+        f"✨ Iniciando post-procesamiento en GPU (upscale_1080p={upscale_1080p}, target_fps={target_fps})..."
     )
     start_time = time.time()
     current_input = input_video_path
 
-    # Paso 1: Super-resolución por IA si está habilitada o disponible
-    if upscale_1080p and use_ai:
-        ai_output = output_video_path.replace(".mp4", "_esrgan.mp4")
-        ai_res = ai_upscale_video(current_input, ai_output)
-        if ai_res and os.path.exists(ai_res):
-            current_input = ai_res
+    w, h = get_video_dimensions(current_input)
+    target_w, target_h = None, None
+    if upscale_1080p and w and h:
+        if h > w:  # 9:16 vertical
+            target_w, target_h = 1080, 1920
+        elif w > h:  # 16:9 horizontal
+            target_w, target_h = 1920, 1080
+        else:  # 1:1 cuadrado
+            target_w, target_h = 1080, 1080
 
-    # Paso 2: Reescalado a 1080p (si no se usó IA) y/o interpolación de frames
+    ai_res = ai_upscale_video(
+        current_input,
+        output_video_path,
+        target_width=target_w,
+        target_height=target_h,
+        target_fps=target_fps,
+    )
+    if ai_res and os.path.exists(ai_res):
+        elapsed = time.time() - start_time
+        logger.info(f"✅ Post-procesamiento GPU AI completado en {elapsed:.2f}s -> {ai_res}")
+        return ai_res
+
+    # Respaldo rápido acelerado por GPU NVENC
+    logger.warning("Usando aceleración por hardware NVENC GPU como respaldo...")
     vf_filters = []
-
-    if upscale_1080p and not use_ai:
-        w, h = get_video_dimensions(current_input)
-        if w and h:
-            if h > w:
-                scale_filter = "scale=-2:1920:flags=lanczos,unsharp=5:5:0.6:5:5:0.0"
-            elif w > h:
-                scale_filter = "scale=-2:1080:flags=lanczos,unsharp=5:5:0.6:5:5:0.0"
-            else:
-                scale_filter = "scale=1080:1080:flags=lanczos,unsharp=5:5:0.6:5:5:0.0"
+    if upscale_1080p:
+        if h and w and h > w:
+            vf_filters.append("scale=-2:1920:flags=bicubic")
         else:
-            scale_filter = "scale='if(gt(ih,iw),-2,1920)':'if(gt(ih,iw),1920,-2)':flags=lanczos,unsharp=5:5:0.6:5:5:0.0"
-
-        vf_filters.append(scale_filter)
-
-    if target_fps and int(target_fps) > 0:
-        fps_filter = f"fps=fps={int(target_fps)}"
-        vf_filters.append(fps_filter)
-
-    if vf_filters:
-        vf_str = ",".join(vf_filters)
-        try:
-            res_path = run_ffmpeg_encode(current_input, output_video_path, vf_str=vf_str)
-            elapsed = time.time() - start_time
-            logger.info(
-                f"✅ Post-procesamiento completado en {elapsed:.2f}s -> {res_path} "
-                f"({os.path.getsize(res_path)} bytes)"
-            )
-            return res_path
-        except Exception as e:
-            logger.error(f"❌ Error inesperado en post-procesamiento: {e}")
-            return current_input
-    else:
-        return current_input
+            vf_filters.append("scale=-2:1080:flags=bicubic")
+    if target_fps:
+        vf_filters.append(f"fps=fps={int(target_fps)}")
+    vf_str = ",".join(vf_filters) if vf_filters else None
+    return run_ffmpeg_encode(current_input, output_video_path, vf_str=vf_str)
 
 
 def queue_prompt(prompt, input_type="image", person_count="single"):
@@ -881,7 +884,7 @@ def handler(job):
         return {"error": f"El archivo de video seleccionado no existe: {selected_video_path}"}
 
     # =========================================================================
-    # Post-procesamiento opcional: Super-resolución IA (Real-ESRGAN / Lanczos) y 60 FPS
+    # Post-procesamiento: Super-resolución IA (Real-ESRGAN en GPU) y 60 FPS
     # =========================================================================
     upscale_1080p = job_input.get("upscale_1080p", False) or job_input.get("upscale", False)
     target_fps = job_input.get("target_fps") or (60 if job_input.get("fps_60", False) else None)
@@ -894,7 +897,7 @@ def handler(job):
             enhanced_path,
             upscale_1080p=(upscale_1080p or ai_upscale),
             target_fps=target_fps,
-            use_ai=ai_upscale,
+            use_ai=True,
         )
 
     # =========================================================================

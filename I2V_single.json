@@ -257,7 +257,7 @@
       "crop": "center",
       "combine_embeds": "average",
       "force_offload": true,
-      "tiles": 0,
+      "tiles": 1,
       "ratio": 0.5,
       "clip_vision": [
         "238",
